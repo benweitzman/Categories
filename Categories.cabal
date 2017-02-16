@@ -17,8 +17,10 @@ library
   hs-source-dirs:      src
   exposed-modules:     Monoids,
                        Category,
-                       Naturals
+                       Classy
+--                       Naturals
   build-depends:       base >= 4.7 && < 5
+                     , constraints
   default-language:    Haskell2010
   extensions:          PolyKinds,
                        TypeFamilies,
@@ -39,7 +41,9 @@ library
                        MultiParamTypeClasses,
                        ConstraintKinds,
                        TypeInType,
-                       StandaloneDeriving
+                       StandaloneDeriving,
+                       FunctionalDependencies
+                       DefaultSignatures
 
 test-suite Categories-test
   type:                exitcode-stdio-1.0
