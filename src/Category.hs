@@ -177,7 +177,7 @@ haskProducts :: Products Vacuous (->) (,)
 haskProducts = Products hask fst snd $ \f g z -> (f z, g z)
 
 
-
+{-
 monoidalProduct :: forall p c x u . Monoidal p c x u -> Terminal p c u -> Products p c x
 monoidalProduct
   (Monoidal cat@(Category idIf dot observe)
@@ -192,6 +192,7 @@ monoidalProduct
     (takeL `dot` bimap (idIf _) terminate)
     undefined
     undefined
+-}
 
 {-
     (takeL `dot` bimap id terminate)

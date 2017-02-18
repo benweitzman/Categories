@@ -1,6 +1,8 @@
 module Naturals where
 
-import Category
+import Classy hiding ((:+:))
+
+import Data.Constraint
 
 import Data.Type.Equality
 import Data.Typeable
@@ -12,17 +14,35 @@ import GHC.Exts
 
 data N = Z | S N
 
+data SNat (n :: N) where
+    SZ :: SNat 'Z
+    SS :: SNat n -> SNat ( 'S n )
+
 type family x :+: y  where
     Z :+: y = y
     (S x) :+: y = S (x :+: y)
+
+(+:) :: SNat a -> SNat b -> SNat (a :+: b)
+SZ +: y = y
+SS x +: y = SS (x +: y)
+
+data SBool (a :: Bool) where
+    STrue :: SBool 'True
+    SFalse :: SBool 'False
 
 type family a :=: b where
     Z :=: Z = True
     (S a) :=: (S b) = a :=: b
     a :=: b = False
 
+(=:) :: SNat a -> SNat b -> SBool (a :=: b)
+SZ =: SZ = STrue
+(SS a) =: (SS b) = a =: b
+SZ =: (SS _) = SFalse
+(SS _) =: SZ = SFalse
 
-induct' :: forall z a p . (Typeable a, Typeable z) => p z -> (forall n . p n -> p (S n)) -> p a
+
+induct' :: forall (z :: N) a p . (Typeable a, Typeable z) => p z -> (forall n . p n -> p (S n)) -> p a
 induct' baseCase inductionCase = case eqT :: Maybe (a :~: z) of
                                    Just Refl -> baseCase
                                    _ -> induct' (inductionCase baseCase) inductionCase
@@ -89,7 +109,9 @@ commutative = induct commutativeZ (const commutativeS)
 
 
 data a :<=: b where
-    LTE :: Proxy p -> (a :+: p :~: b) -> a :<=: b
+    LTE :: (Typeable a, Typeable b) => Proxy p -> (a :+: p :~: b) -> a :<=: b
+
+type instance Hom = (:<=:)
 
 symmetricLT :: forall a . (Typeable a) => a :<=: a
 symmetricLT = LTE (Proxy @Z) $ getCommuteZRight commuteZRight Proxy
@@ -99,12 +121,12 @@ transitiveLT (LTE (Proxy :: Proxy a') Refl) (LTE (Proxy :: Proxy b') Refl) = LTE
   getAssociate associative (Proxy @a) (Proxy @a') (Proxy @b')
 
 
-data Typeable' :: TyFun k Constraint -> * where
-  Typeable' :: Typeable' a
+instance Category (:<=:) where
+    type Prop a = Typeable a
 
-type instance Apply Typeable' a = Typeable a
+    a . b = case (observe a, observe b) of
+              (Dict, Dict) -> transitiveLT b a
 
-type OrderedN = CategoryP Typeable' (:<=:)
+    id =  symmetricLT
 
-nCat :: OrderedN
-nCat = Category symmetricLT (flip transitiveLT)
+    observe (LTE _ _) = Dict
