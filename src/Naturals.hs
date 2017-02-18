@@ -1,16 +1,12 @@
 module Naturals where
 
+import Prelude hiding ((.), id)
+
 import Classy hiding ((:+:))
 
 import Data.Constraint
 
 import Data.Type.Equality
-import Data.Typeable
-
-import Data.Proxy
-
-import Data.Kind
-import GHC.Exts
 
 data N = Z | S N
 
@@ -18,9 +14,18 @@ data SNat (n :: N) where
     SZ :: SNat 'Z
     SS :: SNat n -> SNat ( 'S n )
 
+class KnownNat n where
+    singNat :: SNat n
+
+instance KnownNat 'Z where
+    singNat = SZ
+
+instance KnownNat n => KnownNat ('S n) where
+    singNat = SS singNat
+
 type family x :+: y  where
-    Z :+: y = y
-    (S x) :+: y = S (x :+: y)
+    'Z :+: y = y
+    ('S x) :+: y = 'S (x :+: y)
 
 (+:) :: SNat a -> SNat b -> SNat (a :+: b)
 SZ +: y = y
@@ -31,9 +36,9 @@ data SBool (a :: Bool) where
     SFalse :: SBool 'False
 
 type family a :=: b where
-    Z :=: Z = True
-    (S a) :=: (S b) = a :=: b
-    a :=: b = False
+    'Z :=: 'Z = 'True
+    ('S a) :=: ('S b) = a :=: b
+    a :=: b = 'False
 
 (=:) :: SNat a -> SNat b -> SBool (a :=: b)
 SZ =: SZ = STrue
@@ -41,88 +46,101 @@ SZ =: SZ = STrue
 SZ =: (SS _) = SFalse
 (SS _) =: SZ = SFalse
 
+(==:) :: SNat a -> SNat b -> Maybe (a :~: b)
+SZ ==: SZ = Just Refl
+(SS a) ==: (SS b) = case a ==: b of
+                      Just Refl -> Just Refl
+                      Nothing -> Nothing
+_ ==: _ = Nothing
 
-induct' :: forall (z :: N) a p . (Typeable a, Typeable z) => p z -> (forall n . p n -> p (S n)) -> p a
-induct' baseCase inductionCase = case eqT :: Maybe (a :~: z) of
-                                   Just Refl -> baseCase
-                                   _ -> induct' (inductionCase baseCase) inductionCase
 
-induct :: forall a p . (Typeable a) => p Z -> (forall n . p n -> p (S n)) -> p a
-induct = induct' @Z
+induct' :: forall z a p . (KnownNat a, KnownNat z) => p z -> (forall n . p n -> p ('S n)) -> p a
+induct' baseCase inductionCase = case singNat @z ==: singNat @a of
+  Just Refl -> baseCase
+  Nothing -> induct' (inductionCase baseCase) inductionCase
 
-cong :: (a :~: b) -> (S a :~: S b)
+
+induct :: forall a p . (KnownNat a) => p 'Z -> (forall n . p n -> p ('S n)) -> p a
+induct = induct' @'Z
+
+cong :: (a :~: b) -> ('S a :~: 'S b)
 cong Refl = Refl
 
+
 data Associative c b a = Associative {
-      getAssociate :: Proxy a -> Proxy b -> Proxy c ->  (a :+: (b :+: c)) :~: ((a :+: b) :+: c)
+      getAssociate :: (a :+: (b :+: c)) :~: ((a :+: b) :+: c)
     }
 
-associativeZ :: Associative c b Z
-associativeZ = Associative $ \_ _ _ -> Refl
+associativeZ :: Associative c b 'Z
+associativeZ = Associative $ Refl
 
-associativeS :: forall c b a . Associative c b a -> Associative c b (S a)
-associativeS recurse = Associative $ \_ b c -> cong (getAssociate recurse (Proxy @a) b c)
+associativeS :: forall c b a . Associative c b a -> Associative c b ('S a)
+associativeS recurse = Associative . cong $ getAssociate recurse
 
-associative :: Typeable c => Associative a b c
+associative :: KnownNat c => Associative a b c
 associative = induct associativeZ associativeS
 
+
 data CommuteZRight a = CommuteZRight {
-      getCommuteZRight :: Proxy a -> (a :+: Z) :~: a
+      getCommuteZRight :: (a :+: 'Z) :~: a
     }
 
-commuteZRightZ :: CommuteZRight Z
-commuteZRightZ = CommuteZRight $ \_ -> Refl
+commuteZRightZ :: CommuteZRight 'Z
+commuteZRightZ = CommuteZRight Refl
 
-commuteZRightS :: forall a. CommuteZRight a -> CommuteZRight (S a)
-commuteZRightS recurse = CommuteZRight $ \_ -> cong (getCommuteZRight recurse (Proxy @a))
+commuteZRightS :: forall a. CommuteZRight a -> CommuteZRight ('S a)
+commuteZRightS recurse = CommuteZRight $ cong (getCommuteZRight recurse)
 
-commuteZRight :: Typeable a => CommuteZRight a
+commuteZRight :: KnownNat a => CommuteZRight a
 commuteZRight = induct commuteZRightZ commuteZRightS
 
+
 data CommuteSRight b a = CommuteSRight {
-      getCommuteSRight :: Proxy a -> Proxy b -> (a :+: S b) :~: S (a :+: b)
+      getCommuteSRight :: (a :+: 'S b) :~: 'S (a :+: b)
     }
 
-commuteSRightZ :: CommuteSRight a Z
-commuteSRightZ = CommuteSRight $ \_ _ -> Refl
+commuteSRightZ :: CommuteSRight a 'Z
+commuteSRightZ = CommuteSRight Refl
 
-commuteSRightS :: forall a b . CommuteSRight a b -> CommuteSRight a (S b)
-commuteSRightS recurse = CommuteSRight $ \_ a -> cong $ getCommuteSRight recurse (Proxy @b) a
+commuteSRightS :: forall a b . CommuteSRight a b -> CommuteSRight a ('S b)
+commuteSRightS recurse = CommuteSRight . cong $ getCommuteSRight recurse
 
-commuteSRight :: Typeable b => CommuteSRight a b
+commuteSRight :: KnownNat b => CommuteSRight a b
 commuteSRight = induct commuteSRightZ commuteSRightS
 
+
 data Commutative a b = Commutative {
-      getCommute :: Proxy a -> Proxy b -> (a :+: b) :~: (b :+: a)
+      getCommute :: (a :+: b) :~: (b :+: a)
     }
 
 
-commutativeZ :: Typeable a => Commutative a Z
-commutativeZ = Commutative $ \a _ -> case getCommuteZRight commuteZRight a of
-                                       Refl -> Refl
+commutativeZ :: forall a . KnownNat a => Commutative a 'Z
+commutativeZ = Commutative $ case getCommuteZRight (commuteZRight @a) of
+                               Refl -> Refl
 
-commutativeS :: forall a b . Typeable a => Commutative a (S b)
-commutativeS = Commutative $ \a _ -> case getCommuteSRight commuteSRight a (Proxy @b) of
+commutativeS :: forall a b . KnownNat a => Commutative a ('S b)
+commutativeS = Commutative $ case getCommuteSRight (commuteSRight @a) of
 
-commutative :: (Typeable a, Typeable b) => Commutative a b
+commutative :: (KnownNat a, KnownNat b) => Commutative a b
 commutative = induct commutativeZ (const commutativeS)
 
 
 data a :<=: b where
-    LTE :: (Typeable a, Typeable b) => Proxy p -> (a :+: p :~: b) -> a :<=: b
+    LTE :: (KnownNat a, KnownNat b) => SNat p -> (a :+: p :~: b) -> a :<=: b
 
 type instance Hom = (:<=:)
 
-symmetricLT :: forall a . (Typeable a) => a :<=: a
-symmetricLT = LTE (Proxy @Z) $ getCommuteZRight commuteZRight Proxy
+symmetricLT :: forall a . (KnownNat a) => a :<=: a
+symmetricLT = LTE SZ $ getCommuteZRight commuteZRight
 
-transitiveLT :: forall a b c . (Typeable a) => a :<=: b -> b :<=: c -> a :<=: c
-transitiveLT (LTE (Proxy :: Proxy a') Refl) (LTE (Proxy :: Proxy b') Refl) = LTE (Proxy @(a' :+: b')) $
-  getAssociate associative (Proxy @a) (Proxy @a') (Proxy @b')
+
+transitiveLT :: forall a b c . (KnownNat a) => a :<=: b -> b :<=: c -> a :<=: c
+transitiveLT (LTE (a' :: SNat a') Refl) (LTE (b' :: SNat b') Refl) = LTE (a' +: b') $
+  getAssociate (associative @a @b' @a')
 
 
 instance Category (:<=:) where
-    type Prop a = Typeable a
+    type Prop a = KnownNat a
 
     a . b = case (observe a, observe b) of
               (Dict, Dict) -> transitiveLT b a
