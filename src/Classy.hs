@@ -1,5 +1,6 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
+{-# LANGUAGE TypeInType #-}
 
 module Classy where
 
@@ -8,56 +9,58 @@ import qualified Prelude as P
 import qualified Control.Monad as P
 
 import Data.Constraint
+import Data.Constraint.Forall
 
 import Data.Kind
 
-
-
-type family Hom :: i -> i -> Type
-type instance Hom = (->)
-type instance Hom = (:~>)
-
-type Cat k = k -> k -> Type
-
-type HasCat k = Category (Hom :: Cat k)
-
-type (~>) = (Hom :: i -> i -> Type)
-
-class (c ~ Hom) => Category (c :: k -> k -> Type) where
+class Category k where
   type Prop (a :: k) :: Constraint
   type Prop a = ()
 
-  id :: Prop a => c a a
+  type (~>) :: k -> k -> Type
 
-  (.) :: c y z -> c x y -> c x z
+  id :: forall (a :: k) . Prop a => a ~> a
 
-  observe :: c a b -> Dict (Prop a, Prop b)
-  default observe :: (Prop a ~ (() :: Constraint), Prop b ~ (() :: Constraint))
-                  => c a b -> Dict (Prop a, Prop b)
+  (.) :: forall (x :: k) (y :: k) (z :: k) . y ~> z -> x ~> y -> x ~> z
+
+  observe :: forall (a :: k) (b :: k) . a ~> b -> Dict (Prop a, Prop b)
+  default observe :: forall (a :: k) (b :: k) .
+                     (Prop a ~ (() :: Constraint), Prop b ~ (() :: Constraint))
+                  => a ~> b -> Dict (Prop a, Prop b)
   observe _ = Dict
 
-instance Category (->) where
+instance Category Type where
+  type (~>) = (->)
+
   id = P.id
   (.) = (P..)
 
-data Isomorphism c a b where
-  Iso :: (Category c, Prop a, Prop b) =>
-         { isoTo :: c a b
-         , isoFrom :: c b a
-         } -> Isomorphism c a b
+data Isomorphism a b where
+  Iso :: forall (a :: k) (b :: k) . (Category k, Prop a, Prop b) =>
+         { isoTo :: a ~> b
+         , isoFrom :: b ~> a
+         } -> Isomorphism a b
+
 
 
 {-
-instance Category c => Category (Isomorphism c) where
-  type Prop (Isomorphism c) a = Prop c a
-  id = Iso id id
+instance (Category k, Forall (Same :: Proxy k -> Constraint)) => Category (Proxy k) where
+  type Prop ('Proxy a) = Prop a
+
+  type (~>) = Isomorphism
+
+  id :: forall (a :: Proxy k) . (Prop a) => Isomorphism a a
+  id = case (inst :: Forall Same :- Same a) of
+         Sub Dict -> Iso (id :: Unproxy a ~> Unproxy a) _
+
   (Iso a y) . (Iso b x) = case (observe a, observe b, observe y, observe x) of
     (Dict, Dict, Dict, Dict) -> Iso (a . b) (x . y)
 
   observe (Iso to _) = observe to
 -}
 
-class (HasCat k) => Terminal (t :: k) where
+
+class (Category k) => Terminal (t :: k) where
   terminate :: a ~> t
 
 
@@ -65,7 +68,7 @@ instance Terminal () where
   terminate _ = ()
 
 
-class (HasCat k) => Initial (i :: k) where
+class (Category k) => Initial (i :: k) where
   initiate :: i ~> a
 
 
@@ -74,7 +77,7 @@ data Void
 instance Initial Void where
   initiate v = case v of
 
-class (HasCat j, HasCat k) => Functor (f :: j -> k) where
+class (Category j, Category k) => Functor (f :: j -> k) where
   fmap :: a ~> b -> f a ~> f b
 
 
@@ -89,14 +92,14 @@ instance P.Functor f => Functor (Prelude f) where
   fmap f (Prelude fa) =  Prelude $ P.fmap f fa
 
 
-class (HasCat j, HasCat k, HasCat l) => Bifunctor (p :: j -> k -> l) where
+class (Category j, Category k, Category l) => Bifunctor (p :: j -> k -> l) where
   bimap :: (a ~> b) -> (x ~> y) -> (p a x ~> p b y)
 
-left :: (Bifunctor p, Prop c) => a ~> b -> (p a c) ~> (p b c)
+left :: (Bifunctor p, Prop c) => (a ~> b) -> (p a c ~> p b c)
 left f = bimap f id
 
 
-right :: (Bifunctor p, Prop a) => b ~> c -> (p a b) ~> (p a c)
+right :: (Bifunctor p, Prop a) => (b ~> c) -> (p a b ~> p a c)
 right f = bimap id f
 
 instance Bifunctor Either where
@@ -109,18 +112,20 @@ instance Bifunctor (,) where
 
 type Biendofunctor (f :: k -> k -> k) = (Bifunctor f)
 
-class (Category c, Biendofunctor ((**) :: k -> k -> k)) => Monoidal (c :: k -> k -> *) where
+
+class (Category k, Biendofunctor ((**) :: k -> k -> k)) => Monoidal k where
   type (**) :: k -> k -> k
   type Unit :: k
 
-  leftUnitor :: (Prop a) => Isomorphism c (Unit ** a) a
+  leftUnitor :: forall (a :: k) . (Prop a) => Isomorphism (Unit ** a) a
 
-  rightUnitor :: (Prop a) => Isomorphism c (a ** Unit) a
+  rightUnitor :: forall (a :: k) . (Prop a) => Isomorphism (a ** Unit) a
 
-  associator :: (Prop z, Prop x, Prop y)
-             => Isomorphism c (x ** (y ** z)) ((x ** y) ** z)
+  associator :: forall (x :: k) (y :: k) (z :: k) .
+                (Prop z, Prop x, Prop y)
+             => Isomorphism (x ** (y ** z)) ((x ** y) ** z)
 
-instance Monoidal (->) where
+instance Monoidal Type where
   type (**) = (,)
   type Unit = ()
 
@@ -132,14 +137,14 @@ instance Monoidal (->) where
                    (\((x, y), z) -> (x, (y, z)))
 
 
-class (Monoidal (Hom :: Cat k), Prop m, Prop (Unit :: k)) => Monoid (m :: k) where
+
+class (Monoidal k, Prop m, Prop (Unit :: k)) => Monoid (m :: k) where
   mult :: (m ** m) ~> m
   unit :: Unit ~> m
 
 instance (P.Monoid m) => Monoid m where
   mult (x, y) = x `P.mappend` y
   unit _ = P.mempty
-
 
 data (:+:) f g a = Compose { unCompose :: (f (g a)) } deriving Show
 
@@ -151,8 +156,10 @@ data (:~>) (f :: i -> j) (g :: i -> j) where
   Nat :: (Functor f, Functor g) =>
          (forall a . Prop a => f a ~> g a) -> f :~> g
 
-instance Category (:~>) where
+instance Category (i -> j) where
   type Prop f = Functor f
+
+  type (~>) = (:~>)
 
   id = Nat id1 where
     id1 :: forall f x . (Functor f, Prop x) => (f x) ~> (f x)
@@ -181,7 +188,7 @@ instance Functor Identity where
   fmap f (Identity a) = Identity (f a)
 
 
-instance Monoidal ((:~>) :: Cat (Type -> Type)) where
+instance Monoidal (Type -> Type) where
   type (**) = (:+:)
   type Unit = Identity
 
